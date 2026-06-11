@@ -1,0 +1,522 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Smart Expense Splitter</title>
+  
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='0.9em' font-size='90'%3E💸%3C/text%3E%3C/svg%3E">
+  
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+
+  <style>
+    :root {
+      --bg-main: #f4f6f9;
+      --bg-card: #ffffff;
+      --text-main: #2d3748;
+      --text-muted: #718096;
+      --accent: #3182ce;
+      --accent-hover: #2b6cb0;
+      --success: #38a169;
+      --danger: #e53e3e;
+      --border: #e2e8f0;
+      --progress-empty: #edf2f7;
+    }
+
+    body.dark-mode {
+      --bg-main: #1a202c;
+      --bg-card: #2d3748;
+      --text-main: #f7fafc;
+      --text-muted: #a0aec0;
+      --accent: #63b3ed;
+      --accent-hover: #4299e1;
+      --success: #48bb78;
+      --danger: #f56565;
+      --border: #4a5568;
+      --progress-empty: #4a5568;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, sans-serif;
+      background-color: var(--bg-main);
+      color: var(--text-main);
+      transition: background-color 0.3s, color 0.3s;
+      padding: 20px;
+    }
+
+    .container { max-width: 1000px; margin: 0 auto; }
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 25px;
+      padding-bottom: 15px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .action-group { display: flex; gap: 10px; }
+    button, .btn-label {
+      background-color: var(--accent);
+      color: white;
+      border: none;
+      padding: 10px 18px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-weight: 600;
+    }
+    button.secondary, .btn-label.secondary {
+      background-color: transparent;
+      color: var(--text-main);
+      border: 1px solid var(--border);
+    }
+
+    input {
+      background-color: var(--bg-main);
+      color: var(--text-main);
+      border: 1px solid var(--border);
+      padding: 10px;
+      border-radius: 6px;
+    }
+
+    .grid { display: grid; grid-template-columns: 1fr; gap: 20px; }
+    @media (min-width: 768px) { .grid { grid-template-columns: 1fr 1fr; } }
+
+    .card {
+      background-color: var(--bg-card);
+      border-radius: 12px;
+      padding: 25px;
+      border: 1px solid var(--border);
+      box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+    }
+    h2 { margin-bottom: 15px; font-size: 1.3rem; }
+
+    /* Progress Mechanics */
+    .progress-container {
+      background-color: var(--progress-empty);
+      border-radius: 10px;
+      height: 14px;
+      width: 100%;
+      overflow: hidden;
+      margin: 15px 0;
+    }
+    .progress-bar { background-color: var(--success); height: 100%; width: 0%; transition: width 0.4s; }
+    .progress-bar.warning { background-color: var(--danger); }
+
+    /* Dropzone area */
+    .dropzone {
+      border: 3px dashed var(--border);
+      border-radius: 8px;
+      padding: 40px 20px;
+      text-align: center;
+      display: block;
+      cursor: pointer;
+      background: var(--bg-main);
+    }
+    #receipt-file, #import-file { display: none; }
+
+    #status-indicator {
+      margin-top: 15px;
+      font-weight: bold;
+      color: var(--accent);
+    }
+
+    /* Verification Form Overlay */
+    #review-panel {
+      display: none;
+      margin-top: 20px;
+      padding: 15px;
+      background: var(--bg-main);
+      border-radius: 8px;
+      border: 1px solid var(--accent);
+    }
+    .form-group { margin-bottom: 12px; }
+    .form-group label { display: block; font-size: 0.85rem; margin-bottom: 4px; color: var(--text-muted); }
+    .form-group input { width: 100%; }
+
+    /* Output Aggregation Display */
+    .item-list { list-style: none; }
+    .item-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 12px 0;
+      border-bottom: 1px solid var(--border);
+    }
+    .item-badge {
+      background-color: var(--accent);
+      color: white;
+      padding: 3px 12px;
+      border-radius: 20px;
+      font-weight: bold;
+      font-size: 0.85rem;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="container">
+    <header>
+      <h1>💸 Smarts Expense Splitter</h1>
+      <div class="action-group">
+        <button id="theme-toggle" class="secondary">🌓 Theme</button>
+        <button id="export-btn" class="secondary">📤 Export</button>
+        <label for="import-file" class="btn-label secondary">📥 Import</label>
+        <input type="file" id="import-file" accept=".json">
+      </div>
+    </header>
+
+    <div class="grid">
+      <div>
+        <div class="card" style="margin-bottom: 20px;">
+          <h2>Monthly Limit & Budget</h2>
+          <div style="display: flex; gap: 10px; margin-bottom: 15px;">
+            <input type="number" id="budget-input" placeholder="Set Monthly Budget" style="flex: 1;">
+            <button id="save-budget-btn">Save Limit</button>
+          </div>
+          
+          <div class="progress-container">
+            <div id="progress-bar" class="progress-bar"></div>
+          </div>
+          
+          <div style="display: flex; justify-content: space-between; text-align: center;">
+            <div>
+              <small style="color: var(--text-muted);">Budget Limit</small>
+              <div id="ui-budget" style="font-size: 1.4rem; font-weight: bold;">$0.00</div>
+            </div>
+            <div>
+              <small style="color: var(--text-muted);">Remaining</small>
+              <div id="ui-remaining" style="font-size: 1.4rem; font-weight: bold; color: var(--success);">$0.00</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2>Scan New Receipt</h2>
+          <label class="dropzone" for="receipt-file">
+            <span style="font-size: 2.5rem;">📸</span>
+            <p style="margin-top: 10px; font-weight: bold;">Upload or Capture Receipt</p>
+            <input type="file" id="receipt-file" accept="image/*">
+          </label>
+          <div id="status-indicator"></div>
+
+          <div id="review-panel">
+            <h3 style="margin-bottom: 10px; font-size: 1.1rem;">Verify OCR Output</h3>
+            <div class="form-group">
+              <label>Detected Total ($)</label>
+              <input type="number" step="0.01" id="review-total">
+            </div>
+            <div class="form-group">
+              <label>Detected Items (Separate with commas)</label>
+              <input type="text" id="review-items">
+            </div>
+            <div style="display: flex; gap: 10px; margin-top: 15px;">
+              <button id="commit-btn" style="flex: 1; background: var(--success);">Save & Subtract</button>
+              <button id="cancel-btn" class="secondary">Clear</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Aggregated Monthly Items</h2>
+        <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 15px;">
+          Duplicates are filtered automatically and stacked using graphic badges.
+        </p>
+        <ul id="item-list" class="item-list"></ul>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // --- ADVANCED NATIVE DB SYSTEM (INDEXEDDB) ---
+    const DB_NAME = 'AdvancedSplitterDB';
+    const DB_VERSION = 1;
+
+    function openDatabase() {
+      return new Promise((resolve, reject) => {
+        const req = indexedDB.open(DB_NAME, DB_VERSION);
+        req.onupgradeneeded = (e) => {
+          const db = e.target.result;
+          if (!db.objectStoreNames.contains('settings')) db.createObjectStore('settings');
+          if (!db.objectStoreNames.contains('expenses')) db.createObjectStore('expenses', { keyPath: 'id', autoIncrement: true });
+        };
+        req.onsuccess = (e) => resolve(e.target.result);
+        req.onerror = (e) => reject(e.target.error);
+      });
+    }
+
+    async function dbGet(store, key) {
+      const db = await openDatabase();
+      return new Promise((resolve) => {
+        const tx = db.transaction(store, 'readonly');
+        const req = tx.objectStore(store).get(key);
+        req.onsuccess = () => resolve(req.result);
+      });
+    }
+
+    async function dbSet(store, key, val) {
+      const db = await openDatabase();
+      return new Promise((resolve) => {
+        const tx = db.transaction(store, 'readwrite');
+        tx.objectStore(store).put(val, key);
+        tx.oncomplete = () => resolve();
+      });
+    }
+
+    async function dbGetAllExpenses() {
+      const db = await openDatabase();
+      return new Promise((resolve) => {
+        const tx = db.transaction('expenses', 'readonly');
+        const req = tx.objectStore('expenses').getAll();
+        req.onsuccess = () => resolve(req.result || []);
+      });
+    }
+
+    async function dbAddExpense(expense) {
+      const db = await openDatabase();
+      return new Promise((resolve) => {
+        const tx = db.transaction('expenses', 'readwrite');
+        tx.objectStore('expenses').add(expense);
+        tx.oncomplete = () => resolve();
+      });
+    }
+
+    async function dbWipeAll() {
+      const db = await openDatabase();
+      return new Promise((resolve) => {
+        const tx = db.transaction(['settings', 'expenses'], 'readwrite');
+        tx.objectStore('settings').clear();
+        tx.objectStore('expenses').clear();
+        tx.oncomplete = () => resolve();
+      });
+    }
+
+    // --- APPLICATION RUNTIME STATE ---
+    let state = { budget: 0, theme: 'light', expenses: [] };
+
+    document.addEventListener('DOMContentLoaded', async () => {
+      state.budget = (await dbGet('settings', 'budget')) || 0;
+      state.theme = (await dbGet('settings', 'theme')) || 'light';
+      state.expenses = await dbGetAllExpenses();
+
+      applyTheme();
+      setupDomEvents();
+      renderApp();
+    });
+
+    function applyTheme() {
+      document.body.classList.toggle('dark-mode', state.theme === 'dark');
+    }
+
+    function renderApp() {
+      document.getElementById('budget-input').value = state.budget || '';
+      document.getElementById('ui-budget').innerText = `$${state.budget.toFixed(2)}`;
+
+      const totalSpent = state.expenses.reduce((sum, item) => sum + item.total, 0);
+      const remaining = state.budget - totalSpent;
+      
+      const remUi = document.getElementById('ui-remaining');
+      remUi.innerText = `$${remaining.toFixed(2)}`;
+      remUi.style.color = remaining < 0 ? 'var(--danger)' : 'var(--success)';
+
+      const progressBar = document.getElementById('progress-bar');
+      const percentage = state.budget > 0 ? (totalSpent / state.budget) * 100 : 0;
+      progressBar.style.width = `${Math.min(percentage, 100)}%`;
+      progressBar.classList.toggle('warning', percentage >= 100);
+
+      renderAggregatedBadges();
+    }
+
+    function renderAggregatedBadges() {
+      const listElement = document.getElementById('item-list');
+      listElement.innerHTML = '';
+
+      // Complex mapping logic to aggregate items and count duplicates graphically
+      const itemCounts = {};
+      state.expenses.forEach(exp => {
+        exp.items.forEach(name => {
+          const cleanName = name.trim().toLowerCase();
+          if (!cleanName) return;
+          if (itemCounts[cleanName]) {
+            itemCounts[cleanName].count += 1;
+          } else {
+            itemCounts[cleanName] = { display: name.trim(), count: 1 };
+          }
+        });
+      });
+
+      const aggregatedCollection = Object.values(itemCounts);
+      if (aggregatedCollection.length === 0) {
+        listElement.innerHTML = `<li style="text-align:center; padding:20px; color:var(--text-muted);">No entries yet.</li>`;
+        return;
+      }
+
+      aggregatedCollection.forEach(item => {
+        const li = document.createElement('li');
+        li.className = 'item-row';
+        li.innerHTML = `
+          <span class="item-name" style="text-transform: capitalize;">${item.display}</span>
+          <span class="item-badge">x${item.count}</span>
+        `;
+        listElement.appendChild(li);
+      });
+    }
+
+    // --- PARSING ENGINE & LOGIC WRAPPERS ---
+    function setupDomEvents() {
+      document.getElementById('save-budget-btn').addEventListener('click', async () => {
+        const val = parseFloat(document.getElementById('budget-input').value) || 0;
+        state.budget = val;
+        await dbSet('settings', 'budget', val);
+        renderApp();
+      });
+
+      document.getElementById('theme-toggle').addEventListener('click', async () => {
+        state.theme = state.theme === 'light' ? 'dark' : 'light';
+        await dbSet('settings', 'theme', state.theme);
+        applyTheme();
+      });
+
+      // Advanced Receipt Parsing Pipeline
+      document.getElementById('receipt-file').addEventListener('change', runImageOcrPipeline);
+
+      document.getElementById('cancel-btn').addEventListener('click', () => {
+        document.getElementById('review-panel').style.display = 'none';
+        document.getElementById('status-indicator').innerText = '';
+      });
+
+      document.getElementById('commit-btn').addEventListener('click', async () => {
+        const finalPrice = parseFloat(document.getElementById('review-total').value) || 0;
+        const lineItems = document.getElementById('review-items').value.split(',').map(i => i.trim()).filter(i => i.length > 0);
+
+        const newExpenseRecord = {
+          total: finalPrice,
+          items: lineItems,
+          date: new Date().toISOString()
+        };
+
+        await dbAddExpense(newExpenseRecord);
+        state.expenses.push(newExpenseRecord);
+        
+        document.getElementById('review-panel').style.display = 'none';
+        document.getElementById('status-indicator').innerText = '✅ Receipt successfully logged and subtracted!';
+        renderApp();
+      });
+
+      // Export & Import Configurations
+      document.getElementById('export-btn').addEventListener('click', runBackupExport);
+      document.getElementById('import-file').addEventListener('change', runBackupImport);
+    }
+
+    async function runImageOcrPipeline(e) {
+      const file = e.target.files[0];
+      if (!file) return;
+
+      const statusBox = document.getElementById('status-indicator');
+      document.getElementById('review-panel').style.display = 'none';
+      statusBox.innerText = '⏳ Waking up OCR Brain... (Downloads models on first runtime)';
+
+      try {
+        const worker = await Tesseract.createWorker('eng');
+        statusBox.innerText = '🔍 Analyzing structures & reading context...';
+        
+        const result = await worker.recognize(file);
+        const parsedText = result.data.text;
+        await worker.terminate();
+
+        statusBox.innerText = '🎉 Ingestion complete! Check the verification boxes.';
+        executeAdvancedRegexEngine(parsedText);
+      } catch (err) {
+        console.error(err);
+        statusBox.innerText = '❌ Critical Error initializing OCR parser components.';
+      }
+    }
+
+    function executeAdvancedRegexEngine(text) {
+      const lines = text.split('\n');
+      let foundPrice = 0.00;
+      let catalogedItems = [];
+
+      lines.forEach(line => {
+        const clean = line.trim();
+        
+        // Target lines containing total checks but ignoring sub-totals
+        if (/total/i.test(clean) && !/sub/i.test(clean)) {
+          const moneyRegex = /(\d+(?:\.\d{2}))/;
+          const match = clean.match(moneyRegex);
+          if (match) {
+            const possiblePrice = parseFloat(match[1]);
+            if (possiblePrice > foundPrice) foundPrice = possiblePrice;
+          }
+        } else {
+          // Identify potential line items: strings alongside currency signatures
+          if (/[a-zA-Z]{3,}/.test(clean) && /\d+(?:\.\d{2})/.test(clean)) {
+            const itemStringMatch = clean.match(/^[a-zA-Z\s\-\&]+/);
+            if (itemStringMatch) {
+              const nameValue = itemStringMatch[0].trim();
+              if (nameValue.length > 2 && !/total/i.test(nameValue)) {
+                catalogedItems.push(nameValue);
+              }
+            }
+          }
+        }
+      });
+
+      // Pass directly to input objects inside the UI layer for physical configuration checks
+      document.getElementById('review-total').value = foundPrice.toFixed(2);
+      document.getElementById('review-items').value = catalogedItems.join(', ');
+      document.getElementById('review-panel').style.display = 'block';
+    }
+
+    // --- SYSTEM PORTABILITY LOGIC ---
+    async function runBackupExport() {
+      const packageData = {
+        budget: state.budget,
+        theme: state.theme,
+        expenses: state.expenses
+      };
+      const rawString = JSON.stringify(packageData, null, 2);
+      const dataUri = 'data:application/json;charset=utf-8,' + encodeURIComponent(rawString);
+      
+      const dlLink = document.createElement('a');
+      dlLink.setAttribute('href', dataUri);
+      dlLink.setAttribute('download', `smarts_splitter_backup.json`);
+      document.body.appendChild(dlLink);
+      dlLink.click();
+      dlLink.remove();
+    }
+
+    function runBackupImport(e) {
+      const file = e.target.files[0];
+      if (!file) return;
+
+      const reader = new FileReader();
+      reader.onload = async (event) => {
+        try {
+          const uploadedPayload = JSON.parse(event.target.result);
+          if (typeof uploadedPayload.budget === 'undefined' || !uploadedPayload.expenses) {
+            alert('Invalid database object blueprint format.');
+            return;
+          }
+
+          await dbWipeAll();
+          await dbSet('settings', 'budget', parseFloat(uploadedPayload.budget) || 0);
+          await dbSet('settings', 'theme', uploadedPayload.theme || 'light');
+
+          for (const item of uploadedPayload.expenses) {
+            delete item.id; // clear out index tracking identifiers
+            await dbAddExpense(item);
+          }
+
+          alert('Data recovered successfully.');
+          window.location.reload();
+        } catch (err) {
+          alert('Error handling formatting values inside file structures.');
+        }
+      };
+      reader.readAsText(file);
+    }
+  </script>
+</body>
+</html>
